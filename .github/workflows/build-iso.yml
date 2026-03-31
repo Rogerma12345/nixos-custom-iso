@@ -1,0 +1,56 @@
+name: build-installer-iso
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-installer-iso:
+    name: build safe installer iso
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Check disk space before build
+        run: df -h
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v22
+
+      - name: Show Nix version
+        run: nix --version
+
+      - name: Show flake outputs
+        run: nix flake show
+
+      - name: Build default installer ISO
+        run: nix build -L .#installer-iso --print-build-logs
+
+      - name: List build output
+        run: |
+          chmod +x ./scripts/list-build-output.sh
+          ./scripts/list-build-output.sh ./result
+          ls -lah ./result/iso
+
+      - name: Prepare artifact name
+        id: artifact
+        shell: bash
+        run: |
+          short_sha="${GITHUB_SHA::7}"
+          echo "name=nixos-custom-iso-${GITHUB_RUN_NUMBER}-${short_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: result/iso/*.iso
+          if-no-files-found: error
+          retention-days: 7

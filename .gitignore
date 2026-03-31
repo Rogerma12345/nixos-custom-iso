@@ -1,0 +1,9 @@
+.env
+*.xz
+*.qcow2
+*.iso
+result
+result-*
+tofu
+*.log
+config/custom-installer.local.nix
