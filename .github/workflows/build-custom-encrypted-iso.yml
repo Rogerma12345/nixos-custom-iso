@@ -177,6 +177,13 @@ jobs:
           print(f"Wrote {path}")
           PY
 
+      - name: Force-add generated local config for flake build
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -f config/custom-installer.local.nix
+          git status --short -- config/custom-installer.local.nix
+
       - name: Build custom installer ISO
         run: nix build -L .#installer-custom-iso --print-build-logs
 
