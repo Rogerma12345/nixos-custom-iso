@@ -7,7 +7,7 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-installer-iso:
@@ -40,17 +40,45 @@ jobs:
           ./scripts/list-build-output.sh ./result
           ls -lah ./result/iso
 
-      - name: Prepare artifact name
-        id: artifact
+      - name: Prepare release metadata
+        id: meta
         shell: bash
         run: |
+          set -euo pipefail
+
           short_sha="${GITHUB_SHA::7}"
-          echo "name=nixos-custom-iso-${GITHUB_RUN_NUMBER}-${short_sha}" >> "$GITHUB_OUTPUT"
+          artifact_name="nixos-custom-iso-${GITHUB_RUN_NUMBER}-${short_sha}"
+          tag_name="build-${GITHUB_RUN_NUMBER}-${short_sha}"
+          iso_source="$(find -L result/iso -maxdepth 1 -type f -name '*.iso' | sort | head -n 1)"
+
+          if [ -z "${iso_source}" ]; then
+            echo "No ISO file found in result/iso" >&2
+            exit 1
+          fi
+
+          release_iso="${artifact_name}.iso"
+          cp "${iso_source}" "./${release_iso}"
+
+          echo "artifact_name=${artifact_name}" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${tag_name}" >> "$GITHUB_OUTPUT"
+          echo "release_name=${tag_name}" >> "$GITHUB_OUTPUT"
+          echo "iso_file=${release_iso}" >> "$GITHUB_OUTPUT"
 
       - name: Upload ISO artifact
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         with:
-          name: ${{ steps.artifact.outputs.name }}
-          path: result/iso/*.iso
+          name: ${{ steps.meta.outputs.artifact_name }}
+          path: ${{ steps.meta.outputs.iso_file }}
           if-no-files-found: error
           retention-days: 7
+
+      - name: Publish ISO to GitHub Release
+        uses: softprops/action-gh-release@v2.6.1
+        with:
+          tag_name: ${{ steps.meta.outputs.tag_name }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ steps.meta.outputs.release_name }}
+          prerelease: true
+          generate_release_notes: true
+          files: ${{ steps.meta.outputs.iso_file }}
+          fail_on_unmatched_files: true
