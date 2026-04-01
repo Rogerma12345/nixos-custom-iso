@@ -1,0 +1,245 @@
+name: build-custom-encrypted-iso
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: custom-iso-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-custom-encrypted-iso:
+    name: build encrypted custom installer iso
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: custom-iso-build
+
+    steps:
+      - name: Checkout selected ref
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Check required repository files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f .github/key/ci-artifact-public.asc
+          test -f flake.nix
+          test -f scripts/list-build-output.sh
+
+      - name: Check disk space before build
+        run: df -h
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v22
+
+      - name: Show Nix version
+        run: nix --version
+
+      - name: Show flake outputs
+        run: nix flake show
+
+      - name: Generate config/custom-installer.local.nix
+        shell: bash
+        env:
+          CUSTOM_USERNAME: ${{ secrets.CUSTOM_USERNAME }}
+          CUSTOM_HOSTNAME: ${{ secrets.CUSTOM_HOSTNAME }}
+          CUSTOM_TIMEZONE: ${{ secrets.CUSTOM_TIMEZONE }}
+          CUSTOM_LOCALE: ${{ secrets.CUSTOM_LOCALE }}
+          CUSTOM_AUTHORIZED_KEYS: ${{ secrets.CUSTOM_AUTHORIZED_KEYS }}
+          CUSTOM_FEATURE_DOCKER: ${{ secrets.CUSTOM_FEATURE_DOCKER }}
+          CUSTOM_FEATURE_PYTHON: ${{ secrets.CUSTOM_FEATURE_PYTHON }}
+          CUSTOM_FEATURE_PROXY: ${{ secrets.CUSTOM_FEATURE_PROXY }}
+          CUSTOM_FEATURE_WOLFRAM: ${{ secrets.CUSTOM_FEATURE_WOLFRAM }}
+          CUSTOM_PROXY_ENABLE: ${{ secrets.CUSTOM_PROXY_ENABLE }}
+          CUSTOM_PROXY_HOST: ${{ secrets.CUSTOM_PROXY_HOST }}
+          CUSTOM_PROXY_PORT: ${{ secrets.CUSTOM_PROXY_PORT }}
+          CUSTOM_PROXY_USERNAME: ${{ secrets.CUSTOM_PROXY_USERNAME }}
+          CUSTOM_PROXY_PASSWORD: ${{ secrets.CUSTOM_PROXY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          def require(name: str) -> str:
+              value = os.environ.get(name, "").strip()
+              if value == "":
+                  print(f"Missing required secret: {name}", file=sys.stderr)
+                  sys.exit(1)
+              return value
+
+          def optional(name: str) -> str:
+              return os.environ.get(name, "").strip()
+
+          def parse_bool(name: str, default: str = "false") -> bool:
+              raw = os.environ.get(name, default).strip().lower()
+              if raw not in ("true", "false"):
+                  print(f"{name} must be true or false, got: {raw!r}", file=sys.stderr)
+                  sys.exit(1)
+              return raw == "true"
+
+          def nix_str(value: str) -> str:
+              return json.dumps(value, ensure_ascii=False)
+
+          def nix_bool(value: bool) -> str:
+              return "true" if value else "false"
+
+          username = require("CUSTOM_USERNAME")
+          hostname = require("CUSTOM_HOSTNAME")
+          timezone = require("CUSTOM_TIMEZONE")
+          locale = require("CUSTOM_LOCALE")
+          authorized_key = require("CUSTOM_AUTHORIZED_KEYS")
+
+          features = {
+              "docker": parse_bool("CUSTOM_FEATURE_DOCKER"),
+              "python": parse_bool("CUSTOM_FEATURE_PYTHON"),
+              "proxy": parse_bool("CUSTOM_FEATURE_PROXY"),
+              "wolfram": parse_bool("CUSTOM_FEATURE_WOLFRAM"),
+          }
+
+          proxy_enable = parse_bool("CUSTOM_PROXY_ENABLE")
+          if proxy_enable != features["proxy"]:
+              print(
+                  "CUSTOM_PROXY_ENABLE and CUSTOM_FEATURE_PROXY must match.",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          proxy_host = optional("CUSTOM_PROXY_HOST")
+          proxy_port = optional("CUSTOM_PROXY_PORT")
+          proxy_user = optional("CUSTOM_PROXY_USERNAME")
+          proxy_pass = optional("CUSTOM_PROXY_PASSWORD")
+
+          if features["proxy"]:
+              if proxy_host == "" or proxy_port == "":
+                  print(
+                      "Proxy is enabled, but CUSTOM_PROXY_HOST or CUSTOM_PROXY_PORT is empty.",
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
+
+              if (proxy_user == "") ^ (proxy_pass == ""):
+                  print(
+                      "If proxy auth is used, CUSTOM_PROXY_USERNAME and CUSTOM_PROXY_PASSWORD must both be set.",
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
+
+              auth_prefix = ""
+              if proxy_user != "" and proxy_pass != "":
+                  auth_prefix = f"{proxy_user}:{proxy_pass}@"
+
+              http_proxy = f"http://{auth_prefix}{proxy_host}:{proxy_port}"
+              all_proxy = f"socks5://{auth_prefix}{proxy_host}:{proxy_port}"
+              no_proxy = "127.0.0.1,localhost,internal.domain"
+
+              proxy_block = f"""{{
+                default = {nix_str(http_proxy)};
+                noProxy = {nix_str(no_proxy)};
+                env = {{
+                  httpProxy = {nix_str(http_proxy)};
+                  httpsProxy = {nix_str(http_proxy)};
+                  allProxy = {nix_str(all_proxy)};
+                  noProxy = {nix_str(no_proxy)};
+                }};
+                docker = {{
+                  httpProxy = {nix_str(http_proxy)};
+                  httpsProxy = {nix_str(http_proxy)};
+                  noProxy = {nix_str(no_proxy)};
+                }};
+              }}"""
+          else:
+              proxy_block = "{}"
+
+          content = f"""{{
+            username = {nix_str(username)};
+            hostname = {nix_str(hostname)};
+            timezone = {nix_str(timezone)};
+            locale = {nix_str(locale)};
+            authorizedKeys = [ {nix_str(authorized_key)} ];
+            features = {{
+              docker = {nix_bool(features["docker"])};
+              python = {nix_bool(features["python"])};
+              proxy = {nix_bool(features["proxy"])};
+              wolfram = {nix_bool(features["wolfram"])};
+            }};
+            proxy = {proxy_block};
+          }}
+          """
+
+          path = pathlib.Path("config/custom-installer.local.nix")
+          path.write_text(content, encoding="utf-8")
+          print(f"Wrote {path}")
+          PY
+
+      - name: Build custom installer ISO
+        run: nix build -L .#installer-custom-iso --print-build-logs
+
+      - name: List build output
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./scripts/list-build-output.sh
+          ./scripts/list-build-output.sh ./result
+          ls -lah ./result/iso
+
+      - name: Import GPG public key
+        shell: bash
+        run: |
+          set -euo pipefail
+          gpg --batch --import .github/key/ci-artifact-public.asc
+          gpg --batch --with-colons --fingerprint
+
+      - name: Prepare encrypted artifact
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          short_sha="${GITHUB_SHA::7}"
+          artifact_base="nixos-custom-encrypted-${GITHUB_RUN_NUMBER}-${short_sha}"
+
+          iso_source="$(find -L result/iso -maxdepth 1 -type f -name '*.iso' | sort | head -n 1)"
+          if [ -z "${iso_source}" ]; then
+            echo "No ISO file found in result/iso" >&2
+            exit 1
+          fi
+
+          cp "${iso_source}" "./${artifact_base}.iso"
+
+          recipient_fpr="$(gpg --batch --with-colons --fingerprint | awk -F: '$1=="fpr"{print $10; exit}')"
+          if [ -z "${recipient_fpr}" ]; then
+            echo "No imported public key fingerprint found." >&2
+            exit 1
+          fi
+
+          gpg --batch --yes --trust-model always \
+            --output "./${artifact_base}.iso.gpg" \
+            --recipient "${recipient_fpr}" \
+            --encrypt "./${artifact_base}.iso"
+
+          sha256sum "./${artifact_base}.iso.gpg" > "./${artifact_base}.iso.gpg.sha256"
+          rm -f "./${artifact_base}.iso"
+
+          echo "artifact_name=${artifact_base}" >> "$GITHUB_OUTPUT"
+          echo "encrypted_file=${artifact_base}.iso.gpg" >> "$GITHUB_OUTPUT"
+          echo "checksum_file=${artifact_base}.iso.gpg.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload encrypted ISO artifact
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: ${{ steps.pack.outputs.artifact_name }}
+          path: |
+            ${{ steps.pack.outputs.encrypted_file }}
+            ${{ steps.pack.outputs.checksum_file }}
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Cleanup generated local config
+        if: always()
+        run: rm -f config/custom-installer.local.nix
