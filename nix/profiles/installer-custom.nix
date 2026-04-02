@@ -11,7 +11,7 @@
     ../modules/custom-installer-host-proxy.nix
   ];
 
-  isoImage.isoName = "nixos-custom-iso-installer-custom.iso";
+  image.fileName = "nixos-custom-iso-installer-custom.iso";
   isoImage.makeEfiBootable = true;
   isoImage.makeUsbBootable = true;
   isoImage.squashfsCompression = "zstd -Xcompression-level 8";

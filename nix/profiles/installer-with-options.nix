@@ -23,7 +23,7 @@ in
     Example proxy default: ${proxyOverride.proxy.default}
   '';
 
-  isoImage.isoName = "nixos-custom-iso-installer-with-options.iso";
+  image.fileName = "nixos-custom-iso-installer-with-options.iso";
   isoImage.makeEfiBootable = true;
   isoImage.makeUsbBootable = true;
 }

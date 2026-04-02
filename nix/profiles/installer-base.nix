@@ -6,7 +6,7 @@
     ../modules/base.nix
   ];
 
-  isoImage.isoName = "nixos-custom-iso-installer.iso";
+  image.fileName = "nixos-custom-iso-installer.iso";
   isoImage.makeEfiBootable = true;
   isoImage.makeUsbBootable = true;
   isoImage.squashfsCompression = "zstd -Xcompression-level 8";
