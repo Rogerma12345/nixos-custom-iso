@@ -1,7 +1,7 @@
 { lib, pkgs, ... }:
 let
   installerSettings = import ../lib/installer-settings.nix;
-  settings = installerSettings {};
+  settings = installerSettings { custom = true; };
   wolframPackage = pkgs.wolfram-engine;
 in
 lib.mkIf settings.features.wolfram {
