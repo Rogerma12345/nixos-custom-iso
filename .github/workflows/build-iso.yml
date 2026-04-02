@@ -28,9 +28,6 @@ jobs:
       - name: Show Nix version
         run: nix --version
 
-      - name: Show flake outputs
-        run: nix flake show
-
       - name: Build default installer ISO
         run: nix build -L .#installer-iso --print-build-logs
 
