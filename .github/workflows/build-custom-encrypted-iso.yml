@@ -57,11 +57,13 @@ jobs:
           CUSTOM_PROXY_PASSWORD: ${{ secrets.CUSTOM_PROXY_PASSWORD }}
         run: |
           set -euo pipefail
+
           python3 <<'PY'
           import json
           import os
           import pathlib
           import sys
+
 
           def require(name: str) -> str:
               value = os.environ.get(name, "").strip()
@@ -70,8 +72,10 @@ jobs:
                   sys.exit(1)
               return value
 
+
           def optional(name: str) -> str:
               return os.environ.get(name, "").strip()
+
 
           def parse_bool(name: str, default: str = "false") -> bool:
               raw = os.environ.get(name, default).strip().lower()
@@ -80,11 +84,14 @@ jobs:
                   sys.exit(1)
               return raw == "true"
 
+
           def nix_str(value: str) -> str:
               return json.dumps(value, ensure_ascii=False)
 
+
           def nix_bool(value: bool) -> str:
               return "true" if value else "false"
+
 
           username = require("CUSTOM_USERNAME")
           hostname = require("CUSTOM_HOSTNAME")
@@ -135,39 +142,11 @@ jobs:
               all_proxy = f"socks5://{auth_prefix}{proxy_host}:{proxy_port}"
               no_proxy = "127.0.0.1,localhost,internal.domain"
 
-              proxy_block = f"""{{
-                default = {nix_str(http_proxy)};
-                noProxy = {nix_str(no_proxy)};
-                env = {{
-                  httpProxy = {nix_str(http_proxy)};
-                  httpsProxy = {nix_str(http_proxy)};
-                  allProxy = {nix_str(all_proxy)};
-                  noProxy = {nix_str(no_proxy)};
-                }};
-                docker = {{
-                  httpProxy = {nix_str(http_proxy)};
-                  httpsProxy = {nix_str(http_proxy)};
-                  noProxy = {nix_str(no_proxy)};
-                }};
-              }}"""
+              proxy_block = f"""{{ default = {nix_str(http_proxy)}; noProxy = {nix_str(no_proxy)}; env = {{ httpProxy = {nix_str(http_proxy)}; httpsProxy = {nix_str(http_proxy)}; allProxy = {nix_str(all_proxy)}; noProxy = {nix_str(no_proxy)}; }}; docker = {{ httpProxy = {nix_str(http_proxy)}; httpsProxy = {nix_str(http_proxy)}; noProxy = {nix_str(no_proxy)}; }}; }}"""
           else:
               proxy_block = "{}"
 
-          content = f"""{{
-            username = {nix_str(username)};
-            hostname = {nix_str(hostname)};
-            timezone = {nix_str(timezone)};
-            locale = {nix_str(locale)};
-            authorizedKeys = [ {nix_str(authorized_key)} ];
-            features = {{
-              docker = {nix_bool(features["docker"])};
-              python = {nix_bool(features["python"])};
-              proxy = {nix_bool(features["proxy"])};
-              wolfram = {nix_bool(features["wolfram"])};
-            }};
-            proxy = {proxy_block};
-          }}
-          """
+          content = f"""{{ username = {nix_str(username)}; hostname = {nix_str(hostname)}; timezone = {nix_str(timezone)}; locale = {nix_str(locale)}; authorizedKeys = [ {nix_str(authorized_key)} ]; features = {{ docker = {nix_bool(features["docker"])}; python = {nix_bool(features["python"])}; proxy = {nix_bool(features["proxy"])}; wolfram = {nix_bool(features["wolfram"])}; }}; proxy = {proxy_block}; }} """
 
           path = pathlib.Path("config/custom-installer.local.nix")
           path.write_text(content, encoding="utf-8")
@@ -180,6 +159,73 @@ jobs:
           set -euo pipefail
           git add -f config/custom-installer.local.nix
           git status --short -- config/custom-installer.local.nix
+
+      - name: Download and import Wolfram installer into Nix store
+        shell: bash
+        env:
+          CUSTOM_FEATURE_WOLFRAM: ${{ secrets.CUSTOM_FEATURE_WOLFRAM }}
+          GH_TOKEN: ${{ secrets.WOLFRAM_REPO_PAT }}
+          RELEASE_OWNER: Rogerma12345
+          RELEASE_REPO: wolfram-installer-private
+          RELEASE_TAG: v0.1
+          ASSET_NAME: WolframEngine_14.1.0_LIN.sh
+          EXPECTED_SHA256_HEX: 48be3b9ad95a535ad8f95bce3905f2c086bc04142779828ee6c3da1347ddadcf
+        run: |
+          set -euo pipefail
+
+          wolfram_enabled="$(printf '%s' "${CUSTOM_FEATURE_WOLFRAM:-false}" | tr '[:upper:]' '[:lower:]')"
+          if [ "${wolfram_enabled}" != "true" ]; then
+            echo "Wolfram feature disabled; skipping installer import."
+            exit 0
+          fi
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "Missing required secret: WOLFRAM_REPO_PAT" >&2
+            exit 1
+          fi
+
+          curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            "https://api.github.com/repos/${RELEASE_OWNER}/${RELEASE_REPO}/releases/tags/${RELEASE_TAG}" \
+            -o release.json
+
+          ASSET_API_URL="$(
+            ASSET_NAME="${ASSET_NAME}" python3 <<'PY'
+          import json
+          import os
+          import sys
+
+          asset_name = os.environ["ASSET_NAME"]
+
+          with open("release.json", "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          for asset in data.get("assets", []):
+              if asset.get("name") == asset_name:
+                  print(asset["url"])
+                  sys.exit(0)
+
+          print(f"Release asset not found: {asset_name}", file=sys.stderr)
+          sys.exit(1)
+          PY
+          )"
+
+          curl -fL \
+            -H "Accept: application/octet-stream" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            "${ASSET_API_URL}" \
+            -o "${ASSET_NAME}"
+
+          ACTUAL_SHA256_HEX="$(sha256sum "${ASSET_NAME}" | awk '{print $1}')"
+          echo "actual:   ${ACTUAL_SHA256_HEX}"
+          echo "expected: ${EXPECTED_SHA256_HEX}"
+
+          test "${ACTUAL_SHA256_HEX}" = "${EXPECTED_SHA256_HEX}"
+
+          nix-store --add-fixed sha256 "${ASSET_NAME}"
+
+          rm -f release.json "${ASSET_NAME}"
 
       - name: Build custom installer ISO
         run: nix build -L .#installer-custom-iso --print-build-logs
