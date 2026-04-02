@@ -38,9 +38,6 @@ jobs:
       - name: Show Nix version
         run: nix --version
 
-      - name: Show flake outputs
-        run: nix flake show
-
       - name: Generate config/custom-installer.local.nix
         shell: bash
         env:
