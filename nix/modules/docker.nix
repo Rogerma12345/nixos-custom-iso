@@ -1,7 +1,7 @@
 { lib, pkgs, ... }:
 let
   installerSettings = import ../lib/installer-settings.nix;
-  settings = installerSettings {};
+  settings = installerSettings { custom = true; };
   dockerProxyEnabled = settings.features.docker && settings.features.proxy;
   dockerConfigJson = builtins.toJSON {
     proxies.default = {
