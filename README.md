@@ -1,72 +1,85 @@
 # nixos-custom-iso
 
-这是一个面向 ESXi headless 虚拟机场景的 NixOS installer ISO 仓库。
+这是一个面向 ESXi、headless 虚拟机和远程安装场景的 NixOS installer ISO 仓库。
 
-仓库提供两条明确路径：
+本仓库当前提供两个 flake 输出：
 
-- 默认输出：[`.#installer-iso`](flake.nix:31)
-- 自定义输出：[`.#installer-custom-iso`](flake.nix:32)
+- 默认输出：`.#installer-iso`
+- 自定义输出：`.#installer-custom-iso`
 
-## 默认输出
+`main` 分支的 README 以默认输出为主，用于公开说明仓库用途、默认构建路径和安全边界。自定义加密构建的详细说明建议放到自定义分支 README 中维护。
 
-默认输出 [`.#installer-iso`](flake.nix:31) 的目标是：
+## 仓库目标
 
-- 保持中性
-- 可直接在 GitHub Actions 中构建
-- 不依赖本地未跟踪文件
-- 不提供远程 SSH 登录
-- 不创建普通用户
-- 不读取个人 `hostname` / `timezone` / `locale` / `authorizedKeys` / `proxy`
+本仓库的目标是提供一个可重复构建、适合远程安装场景、默认行为保守的 NixOS installer ISO。
 
-默认配置入口是 [`config/default.nix`](config/default.nix)。
+默认设计原则：
 
-当前默认配置只保留中性系统字段：
+- 默认输出保持中性
+- 默认输出可以直接在 GitHub Actions 中构建
+- 默认输出不依赖未跟踪的本地配置文件
+- 默认输出不创建普通用户
+- 默认输出不开放基于个人 SSH 公钥的远程登录入口
+- 默认输出不读取个人 `hostname`、`timezone`、`locale`、`authorizedKeys`、`proxy` 等配置
 
-- `hostname = "nixos"`
-- `timezone = "UTC"`
-- `locale = "en_US.UTF-8"`
-- `features = { docker = false; python = false; proxy = false; wolfram = false; }`
+## 输出概览
 
-## 自定义输出
+### 1. 默认输出：`.#installer-iso`
 
-自定义输出 [`.#installer-custom-iso`](flake.nix:32) 仅用于本地准备好自定义配置后再显式构建。
+这是公开仓库的默认交付物，适合作为：
 
-它依赖本地文件 [`config/custom-installer.local.nix`](config/custom-installer.local.nix)，该文件已被 [`.gitignore`](.gitignore) 忽略，不进入默认构建路径。
+- 公共分支自动构建产物
+- 基础安装介质
+- 无个人凭据、无代理凭据、无私有依赖的安全默认镜像
 
-示例文件是 [`config/custom-installer.example.nix`](config/custom-installer.example.nix)。
+默认输出对应的 profile 是：
 
-使用步骤：
+- `nix/profiles/installer-base.nix`
 
-1. 复制 [`config/custom-installer.example.nix`](config/custom-installer.example.nix)
-2. 保存为 [`config/custom-installer.local.nix`](config/custom-installer.local.nix)
-3. 编辑以下内容：
-   - `username`
-   - `hostname`
-   - `timezone`
-   - `locale`
-   - `authorizedKeys`
-   - `features`
-   - `proxy`
-4. 构建 [`.#installer-custom-iso`](flake.nix:32)
+该 profile 基于 NixOS minimal installation CD，并启用：
 
-如果缺少本地文件，或仍保留 `CHANGE_ME_*` 占位值，自定义输出会直接失败并给出明确提示。
+- EFI 启动
+- USB 启动
+- zstd squashfs 压缩
 
-## 模块边界
+默认文件名为：
 
-- [`nix/lib/installer-settings.nix`](nix/lib/installer-settings.nix) 统一读取默认配置或递归合并后的自定义配置
-- [`nix/modules/base.nix`](nix/modules/base.nix) 读取最终 `hostname` / `timezone` / `locale`
-- [`nix/modules/docker.nix`](nix/modules/docker.nix)、[`nix/modules/python.nix`](nix/modules/python.nix)、[`nix/modules/proxy.nix`](nix/modules/proxy.nix)、[`nix/modules/wolfram.nix`](nix/modules/wolfram.nix) 按最终 `features` 决定是否启用
-- [`nix/modules/ssh.nix`](nix/modules/ssh.nix) 只负责 OpenSSH 服务与 SSH 安全策略，并且只在自定义输出中导入
-- [`nix/lib/mk-user.nix`](nix/lib/mk-user.nix) 保持 helper 形态，不进入 `imports`
-- [`nix/modules/custom-installer-user.nix`](nix/modules/custom-installer-user.nix) 只在自定义输出中创建 SSH 公钥登录用户，并为该用户提供无密码 sudo 所需的 `wheel` 组
-- [`nix/modules/custom-installer-host-proxy.nix`](nix/modules/custom-installer-host-proxy.nix) 只在自定义输出中覆盖 `hostname` / `timezone` / `locale` / `proxy`
+- `nixos-custom-iso-installer.iso`
 
-## GitHub Actions
+### 2. 自定义输出：`.#installer-custom-iso`
 
-默认 GitHub Actions 主路径只验证 [`.#installer-iso`](flake.nix:31)，不构建 [`.#installer-custom-iso`](flake.nix:32)。
+这是显式自定义构建路径，适合：
 
-## 安全说明
+- 需要预置普通用户
+- 需要预置 SSH 公钥登录
+- 需要指定 `hostname` / `timezone` / `locale`
+- 需要启用 Docker / Python / Proxy / Wolfram
+- 需要通过 GitHub Actions 受控构建并交付加密产物
 
-- 不要提交私钥、密码、token 或代理凭据
-- 不要把真实个人配置写入仓库
-- 占位值只应出现在 [`config/custom-installer.example.nix`](config/custom-installer.example.nix)
+自定义输出对应的 profile 是：
+
+- `nix/profiles/installer-custom.nix`
+
+`main` 分支保留该输出与对应 workflow，但详细使用说明建议在自定义分支单独维护。
+
+## 默认输出的当前行为
+
+默认配置入口：
+
+- `config/default.nix`
+
+当前默认配置为：
+
+```nix
+{
+  hostname = "nixos";
+  timezone = "UTC";
+  locale = "en_US.UTF-8";
+
+  features = {
+    docker = false;
+    python = false;
+    proxy = false;
+    wolfram = false;
+  };
+}
