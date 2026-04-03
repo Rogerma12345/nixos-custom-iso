@@ -46,8 +46,8 @@ jobs:
           short_sha="${GITHUB_SHA::7}"
           artifact_name="nixos-custom-iso-${GITHUB_RUN_NUMBER}-${short_sha}"
           tag_name="build-${GITHUB_RUN_NUMBER}-${short_sha}"
-          iso_source="$(find -L result/iso -maxdepth 1 -type f -name '*.iso' | sort | head -n 1)"
 
+          iso_source="$(find -L result/iso -maxdepth 1 -type f -name '*.iso' | sort | head -n 1)"
           if [ -z "${iso_source}" ]; then
             echo "No ISO file found in result/iso" >&2
             exit 1
@@ -70,12 +70,12 @@ jobs:
           retention-days: 7
 
       - name: Publish ISO to GitHub Release
-        uses: softprops/action-gh-release@v2.6.1
-        with:
-          tag_name: ${{ steps.meta.outputs.tag_name }}
-          target_commitish: ${{ github.sha }}
-          name: ${{ steps.meta.outputs.release_name }}
-          prerelease: true
-          generate_release_notes: true
-          files: ${{ steps.meta.outputs.iso_file }}
-          fail_on_unmatched_files: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ steps.meta.outputs.tag_name }}" "${{ steps.meta.outputs.iso_file }}" \
+            --target "${{ github.sha }}" \
+            --title "${{ steps.meta.outputs.release_name }}" \
+            --prerelease \
+            --generate-notes
