@@ -1,85 +1,119 @@
 # nixos-custom-iso
 
-这是一个面向 ESXi、headless 虚拟机和远程安装场景的 NixOS installer ISO 仓库。
+一个面向 ESXi / headless VM 场景的 NixOS installer ISO 仓库。
 
-本仓库当前提供两个 flake 输出：
+当前提供两个 flake 输出：
 
-- 默认输出：`.#installer-iso`
-- 自定义输出：`.#installer-custom-iso`
+- `.#installer-iso`
+- `.#installer-custom-iso`
 
-`main` 分支的 README 以默认输出为主，用于公开说明仓库用途、默认构建路径和安全边界。自定义加密构建的详细说明建议放到自定义分支 README 中维护。
+`main` 分支 README 以默认输出为主。目标是提供一个可公开构建、行为保守、便于审计的安装镜像。
 
-## 仓库目标
+## 默认输出
 
-本仓库的目标是提供一个可重复构建、适合远程安装场景、默认行为保守的 NixOS installer ISO。
+默认输出是 `.#installer-iso`，对应 `nix/profiles/installer-base.nix`。
 
-默认设计原则：
+特点：
 
-- 默认输出保持中性
-- 默认输出可以直接在 GitHub Actions 中构建
-- 默认输出不依赖未跟踪的本地配置文件
-- 默认输出不创建普通用户
-- 默认输出不开放基于个人 SSH 公钥的远程登录入口
-- 默认输出不读取个人 `hostname`、`timezone`、`locale`、`authorizedKeys`、`proxy` 等配置
+- 基于 NixOS minimal installation CD
+- 默认启用 EFI / USB 启动
+- 默认使用 zstd squashfs 压缩
+- 默认文件名为 `nixos-custom-iso-installer.iso`
 
-## 输出概览
+默认配置来自 `config/default.nix`：
 
-### 1. 默认输出：`.#installer-iso`
+- `hostname = "nixos"`
+- `timezone = "UTC"`
+- `locale = "en_US.UTF-8"`
+- `docker / python / proxy / wolfram` 全部关闭
 
-这是公开仓库的默认交付物，适合作为：
+这意味着默认镜像：
 
-- 公共分支自动构建产物
-- 基础安装介质
-- 无个人凭据、无代理凭据、无私有依赖的安全默认镜像
+- 不创建普通用户
+- 不预置个人 SSH 公钥
+- 不包含代理配置
+- 不包含私有依赖
+- 适合作为公开仓库的默认交付物
 
-默认输出对应的 profile 是：
+## 基础行为
 
-- `nix/profiles/installer-base.nix`
+基础模块位于 `nix/modules/base.nix`，默认会：
 
-该 profile 基于 NixOS minimal installation CD，并启用：
+- 启用 DHCP
+- 锁定 root 密码
+- 设置 `users.mutableUsers = false`
+- 启用 `nix-command` 和 `flakes`
+- 预装常用运维工具
 
-- EFI 启动
-- USB 启动
-- zstd squashfs 压缩
+仓库不会默认执行无人值守安装或自动清盘。
 
-默认文件名为：
+## GitHub Actions
 
-- `nixos-custom-iso-installer.iso`
+默认 workflow：`.github/workflows/build-iso.yml`
 
-### 2. 自定义输出：`.#installer-custom-iso`
+触发方式：
 
-这是显式自定义构建路径，适合：
+- `workflow_dispatch`
+- push 到 `main`
 
-- 需要预置普通用户
-- 需要预置 SSH 公钥登录
-- 需要指定 `hostname` / `timezone` / `locale`
-- 需要启用 Docker / Python / Proxy / Wolfram
-- 需要通过 GitHub Actions 受控构建并交付加密产物
+行为：
 
-自定义输出对应的 profile 是：
+1. 构建 `.#installer-iso`
+2. 上传 ISO artifact
+3. 发布 prerelease
 
-- `nix/profiles/installer-custom.nix`
+## 本地使用
 
-`main` 分支保留该输出与对应 workflow，但详细使用说明建议在自定义分支单独维护。
+查看输出：
 
-## 默认输出的当前行为
+```bash
+nix flake show
+```
 
-默认配置入口：
+校验：
 
-- `config/default.nix`
+```bash
+nix flake check --print-build-logs
+```
 
-当前默认配置为：
+构建默认 ISO：
 
-```nix
-{
-  hostname = "nixos";
-  timezone = "UTC";
-  locale = "en_US.UTF-8";
+```bash
+nix build -L .#installer-iso
+```
 
-  features = {
-    docker = false;
-    python = false;
-    proxy = false;
-    wolfram = false;
-  };
-}
+如果安装了 `just`，也可以使用：
+
+```bash
+just flake-show
+just flake-check
+just build-installer-iso
+```
+
+## 自定义输出
+
+仓库同时提供 `.#installer-custom-iso`，用于：
+
+* 创建普通用户
+* 预置 SSH 公钥登录
+* 设置 `hostname / timezone / locale`
+* 按需启用 Docker / Python / Proxy / Wolfram
+* 通过 GitHub Actions 生成加密 artifact
+
+这条路径建议在自定义分支 README 中单独维护，不与默认公开说明混写。
+
+## 安全边界
+
+`main` 分支的默认路径不包含：
+
+* 个人账户信息
+* SSH 公钥
+* 代理地址与凭据
+* 私有仓库 token
+* Wolfram 私有安装资产
+
+不要提交：
+
+* `config/custom-installer.local.nix`
+* 私钥、密码、token
+* 带真实凭据的代理配置
