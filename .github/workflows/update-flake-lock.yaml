@@ -1,14 +1,12 @@
 name: update-flake-lock
 
-on:
+于:
   workflow_dispatch: # allows manual triggering
-  schedule:
-    - cron: "5 4 * * 0" # runs weekly on Sunday at 04:05
 
 # give permissions without extra tokens
 permissions:
   pull-requests: write
-  issues: write
+  议题: write
   repository-projects: write
   contents: write
 
